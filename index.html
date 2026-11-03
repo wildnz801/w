@@ -1,0 +1,422 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><style>body{margin:0}</style></head><body>
+<title>Tailing Box Twin</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: ISA-101 style grey HMI — two twin process units side by side, operator panel on the right, shared trend + scorecard below. Colour only for the two controllers and for abnormal states. */
+:root{
+  --bg:#e3e5e7; --panel:#f2f3f4; --line:#b8bcc1; --ink:#1e2327; --muted:#5b636b;
+  --steel:#878f96; --slurry:#8d8579; --slurry-deep:#6c655b;
+  --pid:#2b5e8e; --mpc:#b0561c; --alarm:#c4102c; --warn:#d99a00; --sp:#1e2327;
+  --f-ui:"Barlow Semi Condensed","Arial Narrow",system-ui,sans-serif;
+  --f-num:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#1a1d20; --panel:#23272b; --line:#3a4046; --ink:#e2e5e8; --muted:#98a1a9;
+  --steel:#6a7279; --slurry:#7e776c; --slurry-deep:#5a544c;
+  --pid:#72a6d8; --mpc:#e38c50; --alarm:#ff5263; --warn:#f2b84b; --sp:#e2e5e8; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#1a1d20; --panel:#23272b; --line:#3a4046; --ink:#e2e5e8; --muted:#98a1a9;
+  --steel:#6a7279; --slurry:#7e776c; --slurry-deep:#5a544c;
+  --pid:#72a6d8; --mpc:#e38c50; --alarm:#ff5263; --warn:#f2b84b; --sp:#e2e5e8; color-scheme:dark}
+
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font-family:var(--f-ui);font-size:15px;line-height:1.4;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.app{max-width:1280px;margin:0 auto;display:grid;gap:14px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.eyebrow{font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+
+header.bar{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:end;justify-content:space-between;border-bottom:2px solid var(--ink);padding-bottom:12px}
+header h1{margin:2px 0 4px;font-size:clamp(30px,5vw,46px);line-height:1;font-weight:700;letter-spacing:-.01em;text-wrap:balance}
+header p{margin:0;max-width:62ch;color:var(--muted)}
+.clock{display:grid;justify-items:end;gap:2px}
+.clock .num{font-size:22px}
+
+.main{display:grid;grid-template-columns:minmax(0,1fr) 320px;gap:14px;align-items:start}
+@media (max-width:980px){.main{grid-template-columns:minmax(0,1fr)}}
+.units{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+@media (max-width:640px){.units{grid-template-columns:minmax(0,1fr)}}
+
+.unit,.panel,.trend,.score{background:var(--panel);border:1px solid var(--line)}
+.unit{display:grid;min-width:0}
+.unit-head{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line)}
+.unit-head h2{margin:0;font-size:19px;font-weight:700;display:flex;align-items:center;gap:8px}
+.swatch{width:12px;height:12px;display:inline-block}
+.chip{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;padding:2px 8px;border:1px solid var(--line);color:var(--muted)}
+.chip.alarm{background:var(--alarm);border-color:var(--alarm);color:#fff;animation:blink 1s steps(2) infinite}
+@keyframes blink{50%{opacity:.55}}
+canvas.tank{width:100%;aspect-ratio:4/3;display:block;max-width:100%}
+.face{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));border-top:1px solid var(--line)}
+.face div{padding:8px 12px;display:grid;gap:1px}
+.face div:nth-child(odd){border-right:1px solid var(--line)}
+.face div:nth-child(-n+2){border-bottom:1px solid var(--line)}
+.face .num{font-size:22px;font-weight:500}
+.face .unitlbl{font-size:13px;color:var(--muted);font-family:var(--f-ui)}
+.bar-out{height:6px;background:var(--bg);border:1px solid var(--line);margin-top:4px;position:relative}
+.bar-out i{position:absolute;inset:0 auto 0 0;display:block}
+
+.panel{padding:14px;display:grid;gap:16px}
+.panel h3{margin:0 0 8px;font-size:13px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.btns{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+button{font:600 15px var(--f-ui);color:var(--ink);background:var(--bg);border:1px solid var(--line);padding:9px 10px;cursor:pointer;text-align:left}
+button:hover{border-color:var(--ink)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
+button small{display:block;font-weight:500;font-size:12px;color:var(--muted)}
+.seg{display:grid;grid-template-columns:repeat(4,1fr);border:1px solid var(--line)}
+.seg button{border:0;border-right:1px solid var(--line);text-align:center;font-family:var(--f-num);font-size:14px;font-weight:500}
+.seg button:last-child{border-right:0}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+.tune{display:grid;gap:10px;border-left:4px solid var(--c);padding-left:10px}
+.tune label{display:grid;grid-template-columns:1fr auto;gap:2px 8px;font-size:14px;font-weight:600}
+.tune label .num{font-size:13px;color:var(--muted);font-weight:400}
+.tune input[type=range]{grid-column:1/-1;width:100%;accent-color:var(--c)}
+.check{display:flex;gap:8px;align-items:center;font-size:14px;font-weight:600}
+.check input{accent-color:var(--ink);width:16px;height:16px}
+.note{font-size:13px;color:var(--muted);margin:0}
+
+.trend{padding:10px 12px 12px;display:grid;gap:6px;min-width:0}
+.legend{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px;font-weight:600}
+.legend span{display:flex;align-items:center;gap:6px}
+.legend i{width:18px;height:3px;display:inline-block}
+canvas#trend{width:100%;height:340px;display:block}
+
+.score{padding:12px;overflow-x:auto}
+.score table{width:100%;border-collapse:collapse;min-width:520px}
+.score th,.score td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);font-size:15px}
+.score th{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.score td.v{font-family:var(--f-num);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+.score th.v{text-align:right}
+.score td.win::before{content:"▲ ";font-size:10px;vertical-align:1px}
+.score td.win.p{color:var(--pid)} .score td.win.m{color:var(--mpc)}
+.score td .hint{display:block;font-size:12px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){.chip.alarm{animation:none}}
+</style>
+
+<div class="app">
+  <header class="bar">
+    <div>
+      <div class="eyebrow">Flotation tails · TB-3100 · Level loop LIC-3101</div>
+      <h1>Tailing Box Twin</h1>
+      <p>Two identical tailing boxes take the same tailings stream. The left one is held by a PID loop, the right one by a model predictive controller. Hit the feed with a surge or a loss and see which one keeps level and which one keeps the pump calm.</p>
+    </div>
+    <div class="clock"><span class="eyebrow">Sim time</span><span class="num" id="clock">00:00:00</span></div>
+  </header>
+
+  <div class="main">
+    <div class="units">
+      <section class="unit" aria-label="PID controlled tailing box">
+        <div class="unit-head"><h2><span class="swatch" style="background:var(--pid)"></span>Box A · PID</h2><span class="chip" id="chipA">Auto</span></div>
+        <canvas class="tank" id="tankA" aria-label="Animated tailing box A"></canvas>
+        <div class="face">
+          <div><span class="eyebrow">Level PV</span><span class="num" id="pvA">—</span></div>
+          <div><span class="eyebrow">Setpoint</span><span class="num" id="spA">—</span></div>
+          <div><span class="eyebrow">Pump VSD</span><span class="num" id="uA">—</span><div class="bar-out"><i id="barA" style="background:var(--pid)"></i></div></div>
+          <div><span class="eyebrow">Discharge</span><span class="num" id="qA">—</span></div>
+        </div>
+      </section>
+      <section class="unit" aria-label="MPC controlled tailing box">
+        <div class="unit-head"><h2><span class="swatch" style="background:var(--mpc)"></span>Box B · MPC</h2><span class="chip" id="chipB">Auto</span></div>
+        <canvas class="tank" id="tankB" aria-label="Animated tailing box B"></canvas>
+        <div class="face">
+          <div><span class="eyebrow">Level PV</span><span class="num" id="pvB">—</span></div>
+          <div><span class="eyebrow">Setpoint</span><span class="num" id="spB">—</span></div>
+          <div><span class="eyebrow">Pump VSD</span><span class="num" id="uB">—</span><div class="bar-out"><i id="barB" style="background:var(--mpc)"></i></div></div>
+          <div><span class="eyebrow">Discharge</span><span class="num" id="qB">—</span></div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="panel" aria-label="Operator panel">
+      <div>
+        <h3>Upset the process</h3>
+        <div class="btns">
+          <button id="bSurge">Feed surge<small>+35% for ~3 min</small></button>
+          <button id="bLoss">Feed loss<small>−40% for 4 min</small></button>
+          <button id="bSP">Move setpoint<small id="spHint">2.50 → 3.20 m</small></button>
+          <button id="bReset">Reset<small>Clear scores</small></button>
+        </div>
+        <label class="check" style="margin-top:10px"><input type="checkbox" id="cNoise" checked> Natural feed variation</label>
+      </div>
+      <div>
+        <h3>Sim speed</h3>
+        <div class="seg" role="group" aria-label="Simulation speed">
+          <button data-s="1" aria-pressed="false">1×</button><button data-s="5" aria-pressed="false">5×</button><button data-s="15" aria-pressed="true">15×</button><button data-s="40" aria-pressed="false">40×</button>
+        </div>
+      </div>
+      <div class="tune" style="--c:var(--pid)">
+        <h3 style="margin:0">PID tuning</h3>
+        <label><span>Gain K<sub>c</sub></span> <span class="num" id="vKp"></span><input type="range" id="kp" min="5" max="200" step="1" value="50"></label>
+        <label><span>Integral T<sub>i</sub></span> <span class="num" id="vTi"></span><input type="range" id="ti" min="20" max="900" step="5" value="130"></label>
+        <label><span>Derivative T<sub>d</sub></span> <span class="num" id="vTd"></span><input type="range" id="td" min="0" max="30" step="1" value="0"></label>
+        <label class="check"><input type="checkbox" id="ff"> Feed-forward from FIT-3100</label>
+      </div>
+      <div class="tune" style="--c:var(--mpc)">
+        <h3 style="margin:0">MPC tuning</h3>
+        <label><span>Prediction horizon</span> <span class="num" id="vHz"></span><input type="range" id="hz" min="10" max="120" step="5" value="45"></label>
+        <label><span>Move suppression λ</span> <span class="num" id="vLam"></span><input type="range" id="lam" min="-5" max="0" step="0.1" value="-2.6"></label>
+        <p class="note">MPC reads the feed flow meter as a measured disturbance and carries an internal level model with a bias estimator. Its pump model ignores suction-head effects, so there is real plant-model mismatch.</p>
+      </div>
+    </aside>
+  </div>
+
+  <section class="trend" aria-label="Trend">
+    <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+      <span class="eyebrow">Trend · last 15 min</span>
+      <div class="legend"><span><i style="background:var(--pid)"></i>PID</span><span><i style="background:var(--mpc)"></i>MPC</span><span><i style="background:var(--muted)"></i>Setpoint / feed</span><span><i style="background:var(--alarm)"></i>HH / LL</span></div>
+    </div>
+    <canvas id="trend" aria-label="Trend of level, pump speed and feed flow"></canvas>
+  </section>
+
+  <section class="score" aria-label="Scorecard">
+    <table>
+      <thead><tr><th>Since reset</th><th class="v">PID</th><th class="v">MPC</th></tr></thead>
+      <tbody id="scoreBody"></tbody>
+    </table>
+  </section>
+</div>
+
+<script>
+(()=>{
+const P={A:25,H:5,Qmax:4800,Qnom:3200,HH:4.3,LL:0.7,Ts:2,win:900};
+const $=id=>document.getElementById(id);
+const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
+let spare=null;
+function gauss(){if(spare!==null){const s=spare;spare=null;return s}let u=0,v=0;while(!u)u=Math.random();v=Math.random();const r=Math.sqrt(-2*Math.log(u));spare=r*Math.sin(2*Math.PI*v);return r*Math.cos(2*Math.PI*v)}
+
+// ---------- tuning state ----------
+const T={kp:50,ti:130,td:0,ff:false,hz:45,lam:Math.pow(10,-2.6),noise:true,speed:15};
+function bindTuning(){
+  const upd=()=>{
+    T.kp=+$('kp').value;T.ti=+$('ti').value;T.td=+$('td').value;T.ff=$('ff').checked;
+    T.hz=+$('hz').value;T.lam=Math.pow(10,+$('lam').value);T.noise=$('cNoise').checked;
+    $('vKp').textContent=T.kp+' %/m';$('vTi').textContent=T.ti+' s';$('vTd').textContent=T.td+' s';
+    $('vHz').textContent=(T.hz*P.Ts)+' s';$('vLam').textContent=T.lam.toExponential(1);
+  };
+  ['kp','ti','td','ff','hz','lam','cNoise'].forEach(id=>$(id).addEventListener('input',upd));
+  upd();
+}
+
+// ---------- process ----------
+let sim;
+function newLoop(kind){return{kind,h:2.5,u:66.7,uCmd:66.7,hf:2.5,e1:0,e2:0,ffPrev:null,dist:0,hPred:null,qout:3200,
+  iae:0,peak:0,travel:0,alarmT:0,ang:0,particles:[],ripple:0,spill:false}}
+function reset(){
+  sim={t:0,tCtl:0,sp:2.5,walk:0,qinT:P.Qnom,qin:P.Qnom,surges:[],lossUntil:-1,
+       A:newLoop('pid'),B:newLoop('mpc'),buf:[],tBuf:0};
+}
+function feedTarget(){
+  let q=P.Qnom*(1+sim.walk);
+  for(const s of sim.surges){const a=sim.t-s.t0;if(a>0)q+=s.amp*P.Qnom*(1-Math.exp(-a/15))*Math.exp(-a/s.tau)}
+  if(sim.t<sim.lossUntil)q-=0.4*P.Qnom;
+  return Math.max(0,q);
+}
+function plant(L,dt){
+  const d=clamp(L.uCmd-L.u,-1.5*dt,1.5*dt); L.u+=d;            // VSD ramp limit 1.5 %/s
+  let eff=0.82+0.072*L.h; if(L.h<0.4)eff*=L.h/0.4;              // suction head + loss of prime
+  L.qout=P.Qmax*L.u/100*eff;
+  L.h+=dt*(sim.qin-L.qout)/3600/P.A;
+  L.spill=L.h>P.H; L.h=clamp(L.h,0.02,P.H);
+  const dev=Math.abs(L.h-sim.sp);
+  L.iae+=dev*dt/60; L.peak=Math.max(L.peak,dev);
+  if(L.h>P.HH||L.h<P.LL)L.alarmT+=dt;
+}
+function setCmd(L,u){u=clamp(u,15,100);L.travel+=Math.abs(u-L.uCmd);L.uCmd=u}
+function measure(L){const hm=L.h+gauss()*0.012;L.hf+=(hm-L.hf)*0.5}
+function pid(L){
+  const Ts=P.Ts,e=L.hf-sim.sp;                                    // direct acting
+  let du=T.kp*((e-L.e1)+Ts/T.ti*e+T.td/Ts*(e-2*L.e1+L.e2));
+  if(T.ff){const uff=sim.qin/P.Qmax*100;if(L.ffPrev!==null)du+=uff-L.ffPrev;L.ffPrev=uff}else L.ffPrev=null;
+  L.e2=L.e1;L.e1=e;setCmd(L,L.uCmd+du);
+}
+function solve(M,v){const n=v.length;const a=M.map((r,i)=>[...r,v[i]]);
+  for(let c=0;c<n;c++){let p=c;for(let r=c+1;r<n;r++)if(Math.abs(a[r][c])>Math.abs(a[p][c]))p=r;[a[c],a[p]]=[a[p],a[c]];
+    for(let r=c+1;r<n;r++){const f=a[r][c]/a[c][c];for(let k=c;k<=n;k++)a[r][k]-=f*a[c][k]}}
+  const x=new Array(n).fill(0);for(let r=n-1;r>=0;r--){let s=a[r][n];for(let k=r+1;k<n;k++)s-=a[r][k]*x[k];x[r]=s/a[r][r]}return x}
+function mpc(L){
+  const Ts=P.Ts,Np=T.hz,M=4;
+  const b=Ts*P.Qmax/(100*P.A*3600), c=Ts/(P.A*3600);
+  if(L.hPred!==null)L.dist=clamp(L.dist+0.35*(L.hf-L.hPred)/c,-3000,3000);
+  const qd=sim.qin+L.dist, u0=L.uCmd, slope=c*qd-b*u0;
+  const H=[...Array(M)].map(()=>new Array(M).fill(0)), g=new Array(M).fill(0);
+  for(let i=1;i<=Np;i++){
+    const err=sim.sp-(L.hf+i*slope);
+    const row=[];for(let j=0;j<M;j++)row.push(i>j?-b*(i-j):0);
+    for(let j=0;j<M;j++){g[j]+=row[j]*err;for(let k=0;k<M;k++)H[j][k]+=row[j]*row[k]}
+  }
+  for(let j=0;j<M;j++)H[j][j]+=T.lam;
+  const du=solve(H,g);
+  setCmd(L,u0+clamp(du[0],-6,6));
+  L.hPred=L.hf+c*qd-b*L.uCmd;
+}
+function step(dt){
+  sim.t+=dt;
+  if(T.noise)sim.walk+=(-sim.walk*0.004+gauss()*0.006)*dt; else sim.walk*=1-0.01*dt;
+  sim.walk=clamp(sim.walk,-0.18,0.18);
+  sim.surges=sim.surges.filter(s=>sim.t-s.t0<s.tau*6);
+  sim.qinT=feedTarget(); sim.qin+=(sim.qinT-sim.qin)*Math.min(1,dt/8);
+  plant(sim.A,dt);plant(sim.B,dt);
+  sim.A.ang+=dt*sim.A.u*0.3;sim.B.ang+=dt*sim.B.u*0.3;
+  sim.tCtl+=dt;
+  if(sim.tCtl>=P.Ts){sim.tCtl-=P.Ts;measure(sim.A);measure(sim.B);pid(sim.A);mpc(sim.B)}
+  sim.tBuf+=dt;
+  if(sim.tBuf>=2){sim.tBuf-=2;sim.buf.push({t:sim.t,a:sim.A.h,b:sim.B.h,sp:sim.sp,ua:sim.A.u,ub:sim.B.u,q:sim.qin,qa:sim.A.qout,qb:sim.B.qout});
+    while(sim.buf.length&&sim.buf[0].t<sim.t-P.win)sim.buf.shift()}
+}
+function advance(sec){const n=Math.max(1,Math.ceil(sec/0.5)),dt=sec/n;for(let i=0;i<n;i++)step(dt)}
+
+// ---------- theme ----------
+let C={};
+function readTokens(){const s=getComputedStyle(document.documentElement);
+  ['bg','panel','line','ink','muted','steel','slurry','slurry-deep','pid','mpc','alarm','warn','sp'].forEach(k=>C[k]=s.getPropertyValue('--'+k).trim());
+  C.num=s.getPropertyValue('--f-num').trim();C.ui=s.getPropertyValue('--f-ui').trim()}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',readTokens);
+new MutationObserver(readTokens).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+
+// ---------- drawing ----------
+function fit(cv){const r=cv.getBoundingClientRect(),d=window.devicePixelRatio||1;
+  const w=Math.round(r.width*d),h=Math.round(r.height*d);if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}
+  const ctx=cv.getContext('2d');ctx.setTransform(d,0,0,d,0,0);return{ctx,w:r.width,h:r.height}}
+
+let wavePhase=0;
+function drawTank(cv,L,color,rdt){
+  const {ctx,w,h}=fit(cv);ctx.clearRect(0,0,w,h);
+  const x0=w*0.2,x1=w*0.72,y0=h*0.16,y1=h*0.86,bw=x1-x0,bh=y1-y0;
+  const yOf=lv=>y1-lv/P.H*bh;
+  const alarm=L.h>P.HH||L.h<P.LL;
+  // scale
+  ctx.font=`500 10px ${C.num}`;ctx.fillStyle=C.muted;ctx.strokeStyle=C.line;ctx.lineWidth=1;ctx.textAlign='right';ctx.textBaseline='middle';
+  for(let v=0;v<=P.H+1e-6;v+=0.5){const y=yOf(v);ctx.beginPath();ctx.moveTo(x0-(v%1?5:9),y);ctx.lineTo(x0-1,y);ctx.stroke();if(!(v%1))ctx.fillText(v.toFixed(0)+' m',x0-12,y)}
+  // inlet launder + stream
+  const lx=x0+bw*0.16, ly=y0-h*0.06;
+  ctx.fillStyle=C.steel;ctx.fillRect(0,ly-7,lx+8,9);
+  ctx.fillStyle=C.muted;ctx.textAlign='left';ctx.textBaseline='bottom';ctx.font=`600 10px ${C.ui}`;ctx.fillText('FEED  FIT-3100',4,ly-10);
+  const surfY=yOf(L.h);
+  const qn=sim.qin/P.Qnom;
+  const spawn=qn*70*rdt*(reduce?0.3:1);L._acc=(L._acc||0)+spawn;
+  while(L._acc>=1){L._acc--;L.particles.push({x:lx+2+Math.random()*Math.max(3,qn*10),y:ly+2,vy:30+Math.random()*30,r:1+Math.random()*1.8})}
+  ctx.fillStyle=C.slurry;
+  L.particles=L.particles.filter(p=>{p.vy+=420*rdt;p.y+=p.vy*rdt;if(p.y>=surfY){L.ripple=Math.min(1.5,L.ripple+0.05);return false}
+    ctx.globalAlpha=0.85;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,7);ctx.fill();return true});
+  ctx.globalAlpha=1;
+  // slurry body
+  L.ripple*=Math.exp(-rdt*1.5);
+  const amp=1.2+L.ripple*2.2;
+  const grad=ctx.createLinearGradient(0,surfY,0,y1);grad.addColorStop(0,C.slurry);grad.addColorStop(1,C['slurry-deep']);
+  ctx.fillStyle=grad;ctx.beginPath();ctx.moveTo(x0,y1);
+  for(let x=x0;x<=x1;x+=3){const k=(x-x0)/bw;const dy=Math.sin(k*11+wavePhase*2.2)*amp+Math.sin(k*23-wavePhase*3.1)*amp*0.4+(k<0.3?-L.ripple*1.6*Math.cos(k*10):0);ctx.lineTo(x,surfY+dy)}
+  ctx.lineTo(x1,y1);ctx.closePath();ctx.fill();
+  // alarm limits
+  ctx.setLineDash([5,4]);ctx.lineWidth=1;
+  for(const [v,t] of [[P.HH,'HH'],[P.LL,'LL']]){const y=yOf(v);ctx.strokeStyle=C.alarm;ctx.globalAlpha=0.7;ctx.beginPath();ctx.moveTo(x0,y);ctx.lineTo(x1,y);ctx.stroke();ctx.globalAlpha=1;
+    ctx.fillStyle=C.alarm;ctx.font=`600 10px ${C.ui}`;ctx.textAlign='left';ctx.textBaseline='bottom';ctx.fillText(t,x0+4,y-2)}
+  ctx.setLineDash([]);
+  // walls
+  ctx.strokeStyle=alarm&&(performance.now()%1000<500)?C.alarm:C.ink;ctx.lineWidth=alarm?3:2.5;
+  ctx.beginPath();ctx.moveTo(x0,y0);ctx.lineTo(x0,y1);ctx.lineTo(x1,y1);ctx.lineTo(x1,y0);ctx.stroke();
+  // setpoint marker
+  const ys=yOf(sim.sp);ctx.fillStyle=color;ctx.beginPath();ctx.moveTo(x1+2,ys);ctx.lineTo(x1+11,ys-6);ctx.lineTo(x1+11,ys+6);ctx.closePath();ctx.fill();
+  ctx.font=`500 10px ${C.num}`;ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText('SP',x1+14,ys);
+  // LT
+  ctx.fillStyle=C.panel;ctx.strokeStyle=C.ink;ctx.lineWidth=1.5;const lt={x:x1-26,y:y0-h*0.07};
+  ctx.beginPath();ctx.moveTo(lt.x,lt.y+11);ctx.lineTo(lt.x,y0+6);ctx.stroke();
+  ctx.beginPath();ctx.arc(lt.x,lt.y,11,0,7);ctx.fill();ctx.stroke();
+  ctx.fillStyle=C.ink;ctx.font=`600 9px ${C.ui}`;ctx.textAlign='center';ctx.fillText('LT',lt.x,lt.y+1);
+  // outlet pipe & pump
+  const py=y1-10, px=x1+(w-x1)*0.5, pr=Math.min(18,w*0.045);
+  ctx.fillStyle=C.steel;ctx.fillRect(x1,py-5,px-x1-pr+2,10);
+  ctx.fillRect(px+pr-2,py-5,(w-6)-(px+pr-2),10);
+  ctx.fillRect(w-14,y0,10,py-y0+5);
+  ctx.beginPath();ctx.arc(px,py,pr,0,7);ctx.fillStyle=C.panel;ctx.fill();ctx.strokeStyle=C.ink;ctx.lineWidth=2;ctx.stroke();
+  ctx.save();ctx.translate(px,py);ctx.rotate(L.ang);ctx.strokeStyle=color;ctx.lineWidth=2.5;
+  for(let i=0;i<5;i++){ctx.rotate(Math.PI*2/5);ctx.beginPath();ctx.moveTo(2,0);ctx.quadraticCurveTo(pr*0.5,pr*0.15,pr*0.8,pr*0.45);ctx.stroke()}
+  ctx.restore();
+  ctx.fillStyle=C.muted;ctx.font=`600 10px ${C.ui}`;ctx.textAlign='center';ctx.textBaseline='top';ctx.fillText('P-3101',px,py+pr+4);
+  ctx.textAlign='right';ctx.textBaseline='bottom';ctx.fillText('TO THICKENER',w-18,y0-4);
+  // level readout on surface
+  ctx.fillStyle=C.panel;ctx.globalAlpha=0.85;const tx=x0+bw*0.62;ctx.fillRect(tx-34,surfY-24,68,17);ctx.globalAlpha=1;
+  ctx.fillStyle=alarm?C.alarm:C.ink;ctx.font=`500 12px ${C.num}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(L.h.toFixed(2)+' m',tx,surfY-15.5);
+}
+
+function drawTrend(){
+  const cv=$('trend');const {ctx,w,h}=fit(cv);ctx.clearRect(0,0,w,h);
+  const L=56,R=10,gap=14,panes=[{k:'lvl',lo:0,hi:P.H,lab:'Level  m',fmt:v=>v.toFixed(0),ticks:[0,1,2,3,4,5],hgt:0.44},{k:'u',lo:0,hi:100,lab:'Pump VSD  %',fmt:v=>v,ticks:[0,50,100],hgt:0.28},{k:'q',lo:0,hi:6000,lab:'Flow  m³/h',fmt:v=>v>=1000?(v/1000)+'k':v,ticks:[0,3000,6000],hgt:0.28}];
+  const usable=h-18-gap*2;let y=2;
+  const tEnd=Math.max(sim.t,P.win),tStart=tEnd-P.win,xOf=t=>L+(t-tStart)/P.win*(w-L-R);
+  for(const p of panes){
+    const ph=usable*p.hgt;p.y0=y;p.y1=y+ph;y+=ph+gap;
+    const yOf=v=>p.y1-(v-p.lo)/(p.hi-p.lo)*(p.y1-p.y0);
+    ctx.strokeStyle=C.line;ctx.lineWidth=1;ctx.fillStyle=C.muted;ctx.font=`500 10px ${C.num}`;ctx.textAlign='right';ctx.textBaseline='middle';
+    for(const t of p.ticks){const yy=Math.round(yOf(t))+0.5;ctx.globalAlpha=0.6;ctx.beginPath();ctx.moveTo(L,yy);ctx.lineTo(w-R,yy);ctx.stroke();ctx.globalAlpha=1;ctx.fillText(p.fmt(t),L-6,yy)}
+    ctx.save();ctx.translate(12,(p.y0+p.y1)/2);ctx.rotate(-Math.PI/2);ctx.textAlign='center';ctx.font=`600 10px ${C.ui}`;ctx.fillText(p.lab.toUpperCase(),0,0);ctx.restore();
+    const line=(key,col,wd,dash)=>{ctx.strokeStyle=col;ctx.lineWidth=wd;ctx.setLineDash(dash||[]);ctx.beginPath();sim.buf.forEach((s,i)=>{const X=xOf(s.t),Y=yOf(clamp(s[key],p.lo,p.hi));i?ctx.lineTo(X,Y):ctx.moveTo(X,Y)});ctx.stroke();ctx.setLineDash([])};
+    ctx.save();ctx.beginPath();ctx.rect(L,p.y0-2,w-L-R,p.y1-p.y0+4);ctx.clip();
+    if(p.k==='lvl'){
+      ctx.setLineDash([4,4]);ctx.strokeStyle=C.alarm;ctx.globalAlpha=0.7;
+      for(const v of [P.HH,P.LL]){const yy=yOf(v);ctx.beginPath();ctx.moveTo(L,yy);ctx.lineTo(w-R,yy);ctx.stroke()}
+      ctx.globalAlpha=1;ctx.setLineDash([]);
+      line('sp',C.muted,1.5,[6,4]);line('a',C.pid,2);line('b',C.mpc,2);
+    }else if(p.k==='u'){line('ua',C.pid,1.6);line('ub',C.mpc,1.6)}
+    else{line('qa',C.pid,1.2);line('qb',C.mpc,1.2);line('q',C.muted,2)}
+    ctx.restore();
+  }
+  // time axis
+  ctx.fillStyle=C.muted;ctx.font=`500 10px ${C.num}`;ctx.textAlign='center';ctx.textBaseline='top';
+  for(let m=0;m<=15;m+=5){const t=tEnd-P.win+m*60;ctx.fillText(m===15?'now':'−'+(15-m)+' min',xOf(t),h-14)}
+}
+
+// ---------- UI ----------
+const fmtT=s=>{s=Math.floor(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60),x=s%60;return[h,m,x].map(v=>String(v).padStart(2,'0')).join(':')};
+function std(arr){if(arr.length<2)return 0;const m=arr.reduce((a,b)=>a+b,0)/arr.length;return Math.sqrt(arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length)}
+function face(L,s){
+  $('pv'+s).innerHTML=L.h.toFixed(2)+' <span class="unitlbl">m</span>';
+  $('sp'+s).innerHTML=sim.sp.toFixed(2)+' <span class="unitlbl">m</span>';
+  $('u'+s).innerHTML=L.u.toFixed(1)+' <span class="unitlbl">%</span>';
+  $('q'+s).innerHTML=Math.round(L.qout).toLocaleString('en-US')+' <span class="unitlbl">m³/h</span>';
+  $('bar'+s).style.width=L.u+'%';
+  const chip=$('chip'+s),al=L.h>P.HH?'Level HH':L.h<P.LL?'Level LL':null;
+  chip.textContent=al||'Auto';chip.classList.toggle('alarm',!!al);
+}
+function score(){
+  const A=sim.A,B=sim.B,sa=std(sim.buf.map(s=>s.qa)),sb=std(sim.buf.map(s=>s.qb));
+  const rows=[
+    ['Level error, IAE','How far and how long level sat off setpoint',A.iae,B.iae,v=>v.toFixed(2)+' m·min'],
+    ['Worst deviation','Largest gap from setpoint',A.peak,B.peak,v=>v.toFixed(2)+' m'],
+    ['Pump speed travel','Total VSD movement, a proxy for wear',A.travel,B.travel,v=>Math.round(v)+' %'],
+    ['Discharge flow σ','Steadiness of flow to the thickener (15 min)',sa,sb,v=>Math.round(v)+' m³/h'],
+    ['Time in HH / LL alarm','Seconds outside 0.7–4.3 m',A.alarmT,B.alarmT,v=>Math.round(v)+' s'],
+  ];
+  $('scoreBody').innerHTML=rows.map(([n,hint,a,b,f])=>{const d=Math.abs(a-b)>1e-6*Math.max(1,a,b);
+    return `<tr><td>${n}<span class="hint">${hint}</span></td><td class="v ${d&&a<b?'win p':''}">${f(a)}</td><td class="v ${d&&b<a?'win m':''}">${f(b)}</td></tr>`}).join('');
+}
+
+function bindButtons(){
+  $('bSurge').onclick=()=>sim.surges.push({t0:sim.t,amp:0.35,tau:150});
+  $('bLoss').onclick=()=>{sim.lossUntil=sim.t+240};
+  $('bSP').onclick=()=>{sim.sp=sim.sp<2.8?3.2:2.5;$('spHint').textContent=sim.sp.toFixed(2)+' → '+(sim.sp<2.8?'3.20':'2.50')+' m'};
+  $('bReset').onclick=()=>{reset();$('spHint').textContent='2.50 → 3.20 m';advance(5)};
+  document.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{T.speed=+b.dataset.s;document.querySelectorAll('.seg button').forEach(x=>x.setAttribute('aria-pressed',x===b))});
+}
+
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let last=performance.now(),uiAcc=0;
+function frame(now){
+  const rdt=Math.min(0.1,(now-last)/1000);last=now;
+  advance(rdt*T.speed);
+  wavePhase+=rdt*(reduce?0.3:1);
+  drawTank($('tankA'),sim.A,C.pid,rdt);drawTank($('tankB'),sim.B,C.mpc,rdt);drawTrend();
+  uiAcc+=rdt;if(uiAcc>0.25){uiAcc=0;face(sim.A,'A');face(sim.B,'B');score();$('clock').textContent=fmtT(sim.t)}
+  requestAnimationFrame(frame);
+}
+
+readTokens();bindTuning();bindButtons();reset();
+// Pre-run a short history so the page opens mid-shift with an upset already in the trend.
+for(let t=0;t<900;t+=0.5){if(Math.abs(sim.t-380)<0.25)sim.surges.push({t0:sim.t,amp:0.35,tau:150});if(Math.abs(sim.t-650)<0.25)sim.lossUntil=sim.t+240;step(0.5)}
+face(sim.A,'A');face(sim.B,'B');score();
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(readTokens);
+requestAnimationFrame(frame);
+})();
+</script>
+</body></html>

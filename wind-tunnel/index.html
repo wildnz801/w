@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Lattice Wind Tunnel</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chivo:wght@400;600;800&family=Chivo+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one long test section across the top like a real tunnel window, instrument rack underneath (controls | readouts | force trace). */
+:root{
+  --bg:#eceff2; --panel:#ffffff; --ink:#13171c; --muted:#59636e; --line:#d2d8df;
+  --cold:#1d5bbd; --hot:#c4321c; --field:#f6f7f9; --accent:#0d7a6b;
+  --f-ui:"Chivo",system-ui,sans-serif; --f-num:"Chivo Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#0d1013; --panel:#151a1f; --ink:#e5e9ed; --muted:#8a95a2; --line:#28303a;
+  --cold:#5d9bff; --hot:#ff6b4e; --field:#0f1317; --accent:#3cc2ad; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d1013; --panel:#151a1f; --ink:#e5e9ed; --muted:#8a95a2; --line:#28303a;
+  --cold:#5d9bff; --hot:#ff6b4e; --field:#0f1317; --accent:#3cc2ad; color-scheme:dark}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.45 var(--f-ui);
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:20px 40px}
+.wrap{max-width:1320px;margin:0 auto;display:grid;gap:14px}
+.num{font-family:var(--f-num);font-variant-numeric:tabular-nums}
+.eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:end;gap:10px 24px}
+h1{margin:2px 0 4px;font-weight:800;font-size:clamp(30px,5vw,50px);line-height:1;letter-spacing:-.02em;text-wrap:balance}
+header p{margin:0;max-width:64ch;color:var(--muted)}
+.tunnel{position:relative;background:var(--panel);border:1px solid var(--line);padding:10px}
+.tunnel canvas{display:block;width:100%;aspect-ratio:360/144;max-width:100%;touch-action:none;cursor:crosshair}
+.tunnel .flow{position:absolute;left:18px;top:16px;background:var(--panel);border:1px solid var(--line);padding:4px 8px;font-size:12px;font-weight:600;color:var(--muted);pointer-events:none;letter-spacing:.08em}
+.probe{position:absolute;right:18px;top:16px;font-size:12px;background:var(--panel);border:1px solid var(--line);padding:4px 8px;pointer-events:none}
+.rack{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr) minmax(0,1.1fr);gap:14px}
+@media (max-width:1000px){.rack{grid-template-columns:minmax(0,1fr)}}
+.card{background:var(--panel);border:1px solid var(--line);padding:14px;display:grid;gap:14px;align-content:start;min-width:0}
+.row{display:grid;gap:6px}
+.seg{display:flex;flex-wrap:wrap;border:1px solid var(--line);width:fit-content;max-width:100%}
+.seg button{border:0;border-right:1px solid var(--line)}
+.seg button:last-child{border-right:0}
+button{font:600 14px var(--f-ui);color:var(--ink);background:transparent;border:1px solid var(--line);padding:7px 12px;cursor:pointer}
+button:hover{background:var(--bg)}
+button[aria-pressed="true"]{background:var(--ink);color:var(--panel)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.slider{display:grid;grid-template-columns:1fr auto;gap:2px 10px;font-weight:600;font-size:14px}
+.slider .num{color:var(--muted);font-size:13px;font-weight:400}
+.slider input{grid-column:1/-1;width:100%;accent-color:var(--accent)}
+.slider[hidden]{display:none}
+.readouts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line)}
+.readouts div{background:var(--panel);padding:10px 12px;display:grid;gap:2px}
+.readouts .num{font-size:clamp(17px,1.6vw,21px);font-weight:500;white-space:nowrap}
+.readouts small{color:var(--muted);font-size:12px}
+canvas#chart{width:100%;height:190px;display:block}
+.legend{display:flex;gap:16px;font-size:13px;font-weight:600}
+.legend i{display:inline-block;width:16px;height:3px;vertical-align:middle;margin-right:6px}
+.note{margin:0;font-size:13px;color:var(--muted);max-width:70ch}
+.cbar{height:10px;border:1px solid var(--line)}
+.cbar-l{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{scroll-behavior:auto}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <div class="eyebrow">D2Q9 lattice Boltzmann · BGK + Smagorinsky LES · 360 × 144 cells</div>
+      <h1>Lattice Wind Tunnel</h1>
+      <p>A real CFD solver running in your browser. Every frame it streams and collides 466,560 particle distributions, measures the force on the body by momentum exchange, and finds the vortex-shedding frequency from the lift signal. Draw your own shape in the test section.</p>
+    </div>
+    <div class="eyebrow num" id="perf">— MLUPS</div>
+  </header>
+
+  <section class="tunnel" aria-label="Test section">
+    <canvas id="view" aria-label="Flow field"></canvas>
+    <span class="flow">FLOW →</span>
+    <span class="probe num" id="probe" hidden></span>
+  </section>
+
+  <div class="rack">
+    <section class="card" aria-label="Controls">
+      <div class="row"><span class="eyebrow">Body</span>
+        <div class="seg" id="presets">
+          <button data-p="cylinder" aria-pressed="true">Cylinder</button><button data-p="airfoil">NACA 0012</button><button data-p="plate">Flat plate</button><button data-p="tandem">Tandem</button><button data-p="clear">Empty</button>
+        </div></div>
+      <div class="row"><span class="eyebrow">Pointer tool</span>
+        <div class="seg" id="tools"><button data-t="probe" aria-pressed="true">Probe</button><button data-t="draw">Draw wall</button><button data-t="erase">Erase</button></div></div>
+      <div class="row"><span class="eyebrow">Field</span>
+        <div class="seg" id="fields"><button data-f="vort" aria-pressed="true">Vorticity</button><button data-f="speed">Speed</button><button data-f="press">Pressure C<sub>p</sub></button></div>
+        <div class="cbar" id="cbar"></div><div class="cbar-l" id="cbarL"></div></div>
+      <label class="slider" for="re"><span>Reynolds number</span><span class="num" id="vRe"></span><input type="range" id="re" min="1.3" max="3.3" step="0.01" value="2.3"></label>
+      <label class="slider" for="aoa" id="aoaWrap" hidden><span>Angle of attack</span><span class="num" id="vAoa"></span><input type="range" id="aoa" min="-20" max="20" step="1" value="8"></label>
+      <label class="slider" for="gain"><span>Colour gain</span><span class="num" id="vGain"></span><input type="range" id="gain" min="0.3" max="3" step="0.1" value="1"></label>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">
+        <button id="run" aria-pressed="true">Running</button><button id="tracers" aria-pressed="true">Tracers on</button><button id="restart">Restart flow</button>
+      </div>
+    </section>
+
+    <section class="card" aria-label="Readouts">
+      <span class="eyebrow">Balance &amp; probes</span>
+      <div class="readouts">
+        <div><span class="eyebrow">Re</span><span class="num" id="oRe">—</span><small>U·L / ν</small></div>
+        <div><span class="eyebrow">Strouhal</span><span class="num" id="oSt">—</span><small>f·L / U</small></div>
+        <div><span class="eyebrow">Drag C<sub>d</sub></span><span class="num" id="oCd">—</span><small>mean, last window</small></div>
+        <div><span class="eyebrow">Lift C<sub>l</sub></span><span class="num" id="oCl">—</span><small>mean ± amplitude</small></div>
+        <div><span class="eyebrow">Relax. τ</span><span class="num" id="oTau">—</span><small>molecular, lattice</small></div>
+        <div><span class="eyebrow">Time</span><span class="num" id="oT">—</span><small>steps · flow-throughs</small></div>
+      </div>
+      <p class="note">Reference for a circular cylinder at Re ≈ 100–200: C<sub>d</sub> ≈ 1.3–1.4, St ≈ 0.16–0.19. Wall blockage here is 17%, so expect values a little higher.</p>
+    </section>
+
+    <section class="card" aria-label="Force trace">
+      <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:6px">
+        <span class="eyebrow">Force balance trace</span>
+        <div class="legend"><span><i style="background:var(--hot)"></i>C<sub>d</sub></span><span><i style="background:var(--cold)"></i>C<sub>l</sub></span></div>
+      </div>
+      <canvas id="chart" aria-label="Drag and lift history"></canvas>
+      <p class="note">Lift oscillates once the wake goes unstable (around Re 47 for a cylinder). The Strouhal number comes from the period between upward zero crossings of C<sub>l</sub>.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+(()=>{
+'use strict';
+// ================= solver =================
+const NX=360, NY=144, N=NX*NY, U0=0.1, CS2=0.01; // Smagorinsky Cs^2
+const EX=[0,1,0,-1,0,1,-1,-1,1], EY=[0,0,1,0,-1,1,1,-1,-1], OPP=[0,3,4,1,2,7,8,5,6];
+const DK=EX.map((e,k)=>-(EY[k]*NX+e));   // pull offset: source = i - e_k
+let f=new Float32Array(9*N), g=new Float32Array(9*N);
+const RHO=new Float32Array(N), UX=new Float32Array(N), UY=new Float32Array(N), VORT=new Float32Array(N);
+const solid=new Uint8Array(N);
+let Lchar=24, Re=200, steps=0, Fx=0, Fy=0, preset='cylinder', aoa=8;
+
+function eq(r,u,v,k){const usq=1.5*(u*u+v*v),eu=3*(EX[k]*u+EY[k]*v);return (k===0?4/9:k<5?1/9:1/36)*r*(1+eu+0.5*eu*eu-usq)}
+function setEq(i,r,u,v){for(let k=0;k<9;k++)f[k*N+i]=eq(r,u,v,k)}
+function initFlow(){for(let i=0;i<N;i++){setEq(i,1,solid[i]?0:U0*0.05,0);RHO[i]=1;UX[i]=0;UY[i]=0}steps=0;hist.length=0;cross.length=0}
+function Unow(){return U0*Math.min(1,0.05+steps/1200)}
+function tau0(){return Math.max(0.5004,3*(U0*Lchar/Re)+0.5)}
+
+function step(){
+  const U=Unow(), t0=tau0(), t02=t0*t0;
+  const N1=N,N2=2*N,N3=3*N,N4=4*N,N5=5*N,N6=6*N,N7=7*N,N8=8*N;
+  // ---- collide (BGK with Smagorinsky eddy viscosity) ----
+  for(let i=0;i<N;i++){
+    if(solid[i])continue;
+    const f0=f[i],f1=f[i+N1],f2=f[i+N2],f3=f[i+N3],f4=f[i+N4],f5=f[i+N5],f6=f[i+N6],f7=f[i+N7],f8=f[i+N8];
+    const r=f0+f1+f2+f3+f4+f5+f6+f7+f8, ir=1/r;
+    const u=(f1-f3+f5-f6-f7+f8)*ir, v=(f2-f4+f5+f6-f7-f8)*ir;
+    RHO[i]=r;UX[i]=u;UY[i]=v;
+    const usq=1.5*(u*u+v*v), a=r*4/9, b=r/9, c=r/36;
+    const u3=3*u,v3=3*v,uu=4.5*u*u,vv=4.5*v*v;
+    const p5=u+v,p6=v-u;
+    const e0=a*(1-usq),
+      e1=b*(1+u3+uu-usq),e2=b*(1+v3+vv-usq),e3=b*(1-u3+uu-usq),e4=b*(1-v3+vv-usq),
+      e5=c*(1+3*p5+4.5*p5*p5-usq),e6=c*(1+3*p6+4.5*p6*p6-usq),
+      e7=c*(1-3*p5+4.5*p5*p5-usq),e8=c*(1-3*p6+4.5*p6*p6-usq);
+    const n1=f1-e1,n2=f2-e2,n3=f3-e3,n4=f4-e4,n5=f5-e5,n6=f6-e6,n7=f7-e7,n8=f8-e8;
+    const pxx=n1+n3+n5+n6+n7+n8, pyy=n2+n4+n5+n6+n7+n8, pxy=n5-n6+n7-n8;
+    const Q=Math.sqrt(2*(pxx*pxx+pyy*pyy+2*pxy*pxy));
+    const om=2/(t0+Math.sqrt(t02+18*CS2*Q*ir));
+    f[i]=f0+om*(e0-f0);f[i+N1]=f1+om*(e1-f1);f[i+N2]=f2+om*(e2-f2);f[i+N3]=f3+om*(e3-f3);f[i+N4]=f4+om*(e4-f4);
+    f[i+N5]=f5+om*(e5-f5);f[i+N6]=f6+om*(e6-f6);f[i+N7]=f7+om*(e7-f7);f[i+N8]=f8+om*(e8-f8);
+  }
+  // ---- stream (pull) with half-way bounce-back + momentum-exchange force ----
+  let fx=0,fy=0;
+  // edge cells are overwritten by the boundary conditions below, so only the interior streams
+  for(let y=1;y<NY-1;y++){
+    for(let i=y*NX+1,e=y*NX+NX-1;i<e;i++){
+      if(solid[i])continue;
+      g[i]=f[i];
+      for(let k=1;k<9;k++){
+        const j=i+DK[k], ki=k*N+i;
+        if(solid[j]){const o=OPP[k],fo=f[o*N+i];g[ki]=fo;fx+=2*fo*EX[o];fy+=2*fo*EY[o]}
+        else g[ki]=f[ki+DK[k]];
+      }
+    }
+  }
+  // ---- boundaries: equilibrium inlet & far-field walls, zero-gradient outlet ----
+  const EQ=[0,1,2,3,4,5,6,7,8].map(k=>eq(1,U,0,k));
+  for(let x=1;x<NX-1;x++){const ib=x, it=(NY-1)*NX+x;for(let k=0;k<9;k++){g[k*N+ib]=EQ[k];g[k*N+it]=EQ[k]}}
+  for(let y=0;y<NY;y++){                                   // after the walls, so the outlet corners copy fresh values
+    const i0=y*NX, iL=y*NX+NX-1, iL1=iL-1;
+    for(let k=0;k<9;k++){g[k*N+i0]=EQ[k];g[k*N+iL]=g[k*N+iL1]}
+  }
+  const t=f;f=g;g=t;
+  Fx=fx;Fy=fy;steps++;
+}
+
+// ================= geometry =================
+function clearSolid(){solid.fill(0)}
+function disc(cx,cy,r){for(let y=Math.floor(cy-r-1);y<=cy+r+1;y++)for(let x=Math.floor(cx-r-1);x<=cx+r+1;x++){if(x<1||x>=NX-1||y<1||y>=NY-1)continue;if((x-cx)**2+(y-cy)**2<=r*r)solid[y*NX+x]=1}}
+function airfoil(x0,y0,c,deg){
+  const th=deg*Math.PI/180, cs=Math.cos(th), sn=Math.sin(th), xq=x0+0.25*c;
+  for(let y=1;y<NY-1;y++)for(let x=1;x<NX-1;x++){
+    const dx=x-xq, dy=y-y0;
+    const xa=dx*cs-dy*sn+0.25*c, ya=dx*sn+dy*cs;            // rotate into chord frame (nose up for +AoA)
+    if(xa<0||xa>c)continue;
+    const xc=xa/c, yt=5*0.12*c*(0.2969*Math.sqrt(xc)-0.126*xc-0.3516*xc*xc+0.2843*xc**3-0.1015*xc**4);
+    if(Math.abs(ya)<=yt)solid[y*NX+x]=1;
+  }
+}
+function rect(x0,y0,w,h){for(let y=y0;y<y0+h;y++)for(let x=x0;x<x0+w;x++)if(x>0&&x<NX-1&&y>0&&y<NY-1)solid[y*NX+x]=1}
+function build(p){
+  preset=p;clearSolid();
+  const cy=NY/2;
+  if(p==='cylinder'){disc(72,cy+0.6,12);Lchar=24}
+  else if(p==='airfoil'){airfoil(60,cy,90,aoa);Lchar=90}
+  else if(p==='plate'){rect(70,Math.round(cy-15),3,30);Lchar=30}
+  else if(p==='tandem'){disc(64,cy+0.6,9);disc(118,cy,9);Lchar=18}
+  else Lchar=24;
+  document.getElementById('aoaWrap').hidden=p!=='airfoil';
+  initFlow();
+}
+function projectedHeight(){let lo=NY,hi=-1;for(let i=0;i<N;i++)if(solid[i]){const y=(i/NX)|0;if(y<lo)lo=y;if(y>hi)hi=y}return hi<0?24:hi-lo+1}
+
+// ================= diagnostics =================
+const hist=[], cross=[]; let accFx=0,accFy=0,accN=0,lastCl=null;
+function sample(){
+  const U=Unow(), q=0.5*U*U*Lchar;
+  const cd=accFx/accN/q, cl=accFy/accN/q; accFx=accFy=accN=0;
+  if(steps<1800)return;                                   // wait for inlet ramp + start-up transient
+  hist.push({s:steps,cd,cl}); if(hist.length>700)hist.shift();
+  const mean=hist.length>40?hist.slice(-200).reduce((a,h)=>a+h.cl,0)/Math.min(200,hist.length):0;
+  const c=cl-mean;
+  if(lastCl!==null&&lastCl<0&&c>=0)cross.push(steps-(c/(c-lastCl))*SAMPLE);
+  if(cross.length>8)cross.shift();
+  lastCl=c;
+}
+const SAMPLE=10;
+function strouhal(){
+  if(cross.length<3)return null;
+  const per=(cross[cross.length-1]-cross[0])/(cross.length-1);
+  return per>0?Lchar/(per*U0):null;
+}
+
+// ================= rendering =================
+const view=document.getElementById('view'), vctx=view.getContext('2d');
+const off=document.createElement('canvas');off.width=NX;off.height=NY;const octx=off.getContext('2d');
+const img=octx.createImageData(NX,NY), px=img.data;
+let C={}, LUT={}, field='vort', gain=1, tracersOn=true;
+function hex(c){c=c.trim();if(c[0]==='#'){if(c.length===4)c='#'+[...c.slice(1)].map(x=>x+x).join('');return[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)]}const m=c.match(/\d+/g);return m?m.slice(0,3).map(Number):[128,128,128]}
+function ramp(stops){const out=new Uint8ClampedArray(256*3);for(let i=0;i<256;i++){const t=i/255*(stops.length-1),k=Math.min(stops.length-2,Math.floor(t)),fr=t-k,a=stops[k],b=stops[k+1];for(let j=0;j<3;j++)out[i*3+j]=a[j]+(b[j]-a[j])*fr}return out}
+function readTheme(){
+  const s=getComputedStyle(document.documentElement);
+  ['bg','panel','ink','muted','line','cold','hot','field','accent'].forEach(k=>C[k]=s.getPropertyValue('--'+k).trim());
+  C.num=s.getPropertyValue('--f-num').trim();
+  const cold=hex(C.cold),hot=hex(C.hot),fld=hex(C.field),acc=hex(C.accent),ink=hex(C.ink);
+  const mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+  LUT.vort=ramp([mix(cold,ink,0.35),cold,fld,hot,mix(hot,ink,0.35)]);
+  LUT.speed=ramp([fld,mix(fld,acc,0.55),acc,mix(acc,hot,0.6),hot]);
+  LUT.press=ramp([cold,mix(cold,fld,0.6),fld,mix(hot,fld,0.6),hot]);
+  C.solid=C.ink; drawCbar();
+}
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',readTheme);
+new MutationObserver(readTheme).observe(document.documentElement,{attributes:true,attributeFilter:['data-theme']});
+
+function drawCbar(){
+  const L=LUT[field];if(!L)return;
+  const st=[];for(let i=0;i<=8;i++){const j=Math.round(i/8*255)*3;st.push(`rgb(${L[j]},${L[j+1]},${L[j+2]}) ${i*12.5}%`)}
+  document.getElementById('cbar').style.background=`linear-gradient(90deg,${st.join(',')})`;
+  const lab={vort:['clockwise','0','counter-clockwise'],speed:['0','0.9 U','1.8 U'],press:['Cp −2','−0.5','Cp +1']}[field];
+  document.getElementById('cbarL').innerHTML=lab.map(t=>`<span>${t}</span>`).join('');
+}
+
+function renderField(){
+  const L=LUT[field], U=Unow();
+  const sx=hex(C.solid);
+  if(field==='vort'){
+    for(let y=1;y<NY-1;y++)for(let x=1;x<NX-1;x++){const i=y*NX+x;VORT[i]=(UY[i+1]-UY[i-1]-UX[i+NX]+UX[i-NX])*0.5}
+  }
+  const vmax=0.012*(U0/0.1)*(24/Lchar)**0.5/gain, smax=1.8*U, cpS=1.5*U*U;
+  for(let y=0;y<NY;y++){
+    const row=(NY-1-y)*NX;
+    for(let x=0;x<NX;x++){
+      const i=y*NX+x, p=(row+x)*4;
+      if(solid[i]){px[p]=sx[0];px[p+1]=sx[1];px[p+2]=sx[2];px[p+3]=255;continue}
+      let t;
+      if(field==='vort')t=0.5+0.5*Math.max(-1,Math.min(1,VORT[i]/vmax));
+      else if(field==='speed')t=Math.min(1,Math.hypot(UX[i],UY[i])/smax*gain);
+      else{const cp=(RHO[i]-1)/cpS;t=Math.max(0,Math.min(1,(cp*gain+2)/3))}
+      const j=(t*255|0)*3;px[p]=L[j];px[p+1]=L[j+1];px[p+2]=L[j+2];px[p+3]=255;
+    }
+  }
+  octx.putImageData(img,0,0);
+}
+
+// tracers
+const NP=1800, PX=new Float32Array(NP), PY=new Float32Array(NP), PA=new Float32Array(NP);
+function seed(k,anywhere){PX[k]=anywhere?Math.random()*NX:1+Math.random()*3;PY[k]=1+Math.random()*(NY-2);PA[k]=0}
+for(let k=0;k<NP;k++)seed(k,true);
+function vel(x,y){
+  const x0=Math.floor(x),y0=Math.floor(y);if(x0<0||y0<0||x0>=NX-1||y0>=NY-1)return null;
+  const fx=x-x0,fy=y-y0,i=y0*NX+x0;
+  if(solid[i]||solid[i+1]||solid[i+NX]||solid[i+NX+1])return null;
+  return[(UX[i]*(1-fx)+UX[i+1]*fx)*(1-fy)+(UX[i+NX]*(1-fx)+UX[i+NX+1]*fx)*fy,(UY[i]*(1-fx)+UY[i+1]*fx)*(1-fy)+(UY[i+NX]*(1-fx)+UY[i+NX+1]*fx)*fy];
+}
+function moveTracers(n){
+  const sub=Math.max(1,Math.ceil(n/3)),h=n/sub;
+  for(let k=0;k<NP;k++){
+    for(let s=0;s<sub;s++){const v=vel(PX[k],PY[k]);if(!v){seed(k);break}PX[k]+=v[0]*h;PY[k]+=v[1]*h}
+    PA[k]=Math.min(1,PA[k]+0.04);
+    if(PX[k]>=NX-1.5)seed(k);
+  }
+}
+
+function fit(cv){const r=cv.getBoundingClientRect(),d=Math.min(2,window.devicePixelRatio||1),w=Math.round(r.width*d),h=Math.round(r.height*d);if(cv.width!==w||cv.height!==h){cv.width=w;cv.height=h}return{w,h,d}}
+function drawView(){
+  const {w,h,d}=fit(view);
+  vctx.imageSmoothingEnabled=true;vctx.imageSmoothingQuality='high';
+  vctx.drawImage(off,0,0,w,h);
+  // crisp body outline on top of the smoothed field
+  const s=w/NX;vctx.fillStyle=C.solid;
+  for(let y=0;y<NY;y++)for(let x=0;x<NX;x++)if(solid[y*NX+x])vctx.fillRect(Math.floor(x*s),Math.floor((NY-1-y)*s),Math.ceil(s),Math.ceil(s));
+  if(tracersOn){
+    vctx.fillStyle=C.ink;
+    for(let k=0;k<NP;k++){vctx.globalAlpha=0.55*PA[k];vctx.fillRect(PX[k]*s-0.9*d,(NY-1-PY[k])*s-0.9*d,1.8*d,1.8*d)}
+    vctx.globalAlpha=1;
+  }
+}
+
+const chart=document.getElementById('chart'),cctx=chart.getContext('2d');
+function drawChart(){
+  const {w,h,d}=fit(chart);cctx.setTransform(d,0,0,d,0,0);const W=w/d,H=h/d;cctx.clearRect(0,0,W,H);
+  const L=40,R=8,T=8,B=18;
+  if(hist.length<2){cctx.fillStyle=C.muted;cctx.font=`12px ${C.num}`;cctx.textAlign='center';cctx.fillText(steps<1800?'Settling start-up transient… '+Math.round(steps/18)+'%':'Collecting…',W/2,H/2);return}
+  let lo=Infinity,hi=-Infinity;for(const p of hist){lo=Math.min(lo,p.cd,p.cl);hi=Math.max(hi,p.cd,p.cl)}
+  lo=Math.min(lo,0);const pad=(hi-lo)*0.1||0.5;lo-=pad;hi+=pad;
+  const step=niceStep((hi-lo)/4);
+  const yOf=v=>T+(hi-v)/(hi-lo)*(H-T-B), x0=hist[0].s,x1=hist[hist.length-1].s, xOf=s=>L+(s-x0)/Math.max(1,x1-x0)*(W-L-R);
+  cctx.font=`11px ${C.num}`;cctx.textAlign='right';cctx.textBaseline='middle';
+  for(let v=Math.ceil(lo/step)*step;v<=hi;v+=step){const y=Math.round(yOf(v))+0.5;cctx.strokeStyle=C.line;cctx.lineWidth=1;cctx.beginPath();cctx.moveTo(L,y);cctx.lineTo(W-R,y);cctx.stroke();cctx.fillStyle=C.muted;cctx.fillText(v.toFixed(step<0.1?2:1),L-6,y)}
+  const line=(k,col)=>{cctx.strokeStyle=col;cctx.lineWidth=1.8;cctx.beginPath();hist.forEach((p,i)=>{const X=xOf(p.s),Y=yOf(p[k]);i?cctx.lineTo(X,Y):cctx.moveTo(X,Y)});cctx.stroke();
+    const p=hist[hist.length-1];cctx.fillStyle=col;cctx.beginPath();cctx.arc(xOf(p.s),yOf(p[k]),3,0,7);cctx.fill()};
+  line('cd',C.hot);line('cl',C.cold);
+  cctx.fillStyle=C.muted;cctx.textAlign='left';cctx.textBaseline='bottom';cctx.fillText((x1-x0).toLocaleString('en-US')+' steps',L,H-2);
+}
+function niceStep(r){const p=Math.pow(10,Math.floor(Math.log10(r))),m=r/p;return(m<1.5?1:m<3?2:m<7?5:10)*p}
+
+// ================= UI =================
+const $=id=>document.getElementById(id);
+let running=true, tool='probe', msPerStep=3, perfAcc=0, perfSteps=0, perfT=0;
+function setRe(){Re=Math.round(Math.pow(10,+$('re').value));$('vRe').textContent=Re.toLocaleString('en-US')}
+function pressGroup(id,btn){document.querySelectorAll('#'+id+' button').forEach(b=>b.setAttribute('aria-pressed',b===btn))}
+$('re').oninput=setRe;
+$('aoa').oninput=()=>{aoa=+$('aoa').value;$('vAoa').textContent=aoa+'°';if(preset==='airfoil'){for(let i=0;i<N;i++)if(solid[i])setEq(i,1,0,0);clearSolid();airfoil(60,NY/2,90,aoa);hist.length=0;cross.length=0;lastCl=null}};
+$('gain').oninput=()=>{gain=+$('gain').value;$('vGain').textContent=gain.toFixed(1)+'×'};
+document.querySelectorAll('#presets button').forEach(b=>b.onclick=()=>{pressGroup('presets',b);build(b.dataset.p)});
+document.querySelectorAll('#tools button').forEach(b=>b.onclick=()=>{pressGroup('tools',b);tool=b.dataset.t});
+document.querySelectorAll('#fields button').forEach(b=>b.onclick=()=>{pressGroup('fields',b);field=b.dataset.f;drawCbar()});
+$('run').onclick=()=>{running=!running;$('run').textContent=running?'Running':'Paused';$('run').setAttribute('aria-pressed',running)};
+$('tracers').onclick=()=>{tracersOn=!tracersOn;$('tracers').textContent=tracersOn?'Tracers on':'Tracers off';$('tracers').setAttribute('aria-pressed',tracersOn)};
+$('restart').onclick=()=>{initFlow();lastCl=null};
+
+function latticeAt(e){const r=view.getBoundingClientRect();return[(e.clientX-r.left)/r.width*NX,NY-1-(e.clientY-r.top)/r.height*NY]}
+let painting=false;
+function paint(e){
+  const [lx,ly]=latticeAt(e),R=3.2;
+  for(let y=Math.floor(ly-R);y<=ly+R;y++)for(let x=Math.floor(lx-R);x<=lx+R;x++){
+    if(x<2||x>=NX-2||y<2||y>=NY-2||(x-lx)**2+(y-ly)**2>R*R)continue;
+    const i=y*NX+x;
+    if(tool==='draw')solid[i]=1;else if(solid[i]){solid[i]=0;setEq(i,1,0,0)}
+  }
+  if(preset!=='custom'){preset='custom';pressGroup('presets',null)}
+  Lchar=projectedHeight();hist.length=0;cross.length=0;lastCl=null;
+}
+view.addEventListener('pointerdown',e=>{if(tool!=='probe'){painting=true;view.setPointerCapture(e.pointerId);paint(e)}});
+view.addEventListener('pointermove',e=>{
+  if(painting){paint(e);return}
+  const [lx,ly]=latticeAt(e),x=Math.round(lx),y=Math.round(ly),pr=$('probe');
+  if(x<0||x>=NX||y<0||y>=NY){pr.hidden=true;return}
+  const i=y*NX+x,U=Unow();
+  pr.hidden=false;
+  pr.textContent=solid[i]?`(${x}, ${y})  solid`:`(${x}, ${y})  |u|/U ${(Math.hypot(UX[i],UY[i])/U).toFixed(2)}  Cp ${((RHO[i]-1)/(1.5*U*U)).toFixed(2)}`;
+});
+view.addEventListener('pointerup',()=>painting=false);
+view.addEventListener('pointerleave',()=>{$('probe').hidden=true});
+
+function readouts(){
+  $('oRe').textContent=Re.toLocaleString('en-US');
+  const st=strouhal();$('oSt').textContent=st?st.toFixed(3):'—';
+  if(hist.length>20){
+    const w=hist.slice(-200),cd=w.reduce((a,p)=>a+p.cd,0)/w.length,cl=w.reduce((a,p)=>a+p.cl,0)/w.length;
+    const amp=(Math.max(...w.map(p=>p.cl))-Math.min(...w.map(p=>p.cl)))/2;
+    $('oCd').textContent=cd.toFixed(2);$('oCl').textContent=cl.toFixed(2)+' ± '+amp.toFixed(2);
+  }else{$('oCd').textContent='—';$('oCl').textContent='—'}
+  $('oTau').textContent=tau0().toFixed(4);
+  $('oT').textContent=steps.toLocaleString('en-US')+' · '+(steps*U0/NX).toFixed(1);
+}
+
+let last=performance.now(),uiT=0;
+function frame(now){
+  const dt=Math.min(0.1,(now-last)/1000);last=now;
+  if(running){
+    const n=Math.max(1,Math.min(40,Math.round(18/msPerStep)));
+    const t0=performance.now();
+    for(let s=0;s<n;s++){step();accFx+=Fx;accFy+=Fy;accN++;if(steps%SAMPLE===0)sample();
+      if(steps%500===0&&!isFinite(RHO[(NY>>1)*NX+NX-10])){initFlow();break}}
+    const el=performance.now()-t0;msPerStep=0.8*msPerStep+0.2*(el/n);
+    perfSteps+=n;perfT+=el;
+    moveTracers(n);
+  }
+  renderField();drawView();
+  uiT+=dt;if(uiT>0.3){uiT=0;drawChart();readouts();if(perfT>0)$('perf').textContent=(perfSteps*N/perfT/1000).toFixed(1)+' MLUPS · '+Math.round(1000/Math.max(1,msPerStep))+' steps/s';perfSteps=0;perfT=0}
+  requestAnimationFrame(frame);
+}
+
+readTheme();setRe();$('gain').oninput();$('vAoa').textContent=aoa+'°';
+build('cylinder');
+if(document.fonts&&document.fonts.ready)document.fonts.ready.then(readTheme);
+window.__lbm={get steps(){return steps},hist,strouhal,step,sample:()=>{accFx+=Fx;accFy+=Fy;accN++;if(steps%SAMPLE===0)sample()}};
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
